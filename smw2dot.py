@@ -10,7 +10,7 @@ sigcolors = ('green','blue','red','black')
 moduleAPI = [55] # 55 - argument definition
 interconnectAPI = [374, 611, 1402, 1540]
 # 611 - XPanel, 1540 - TPMC-8L, 1402 - TPMC-8X, 374 - Ethernet ISC
-
+comment_signals = ['//__digital_reserved__','[~UNUSED~]','//__analog_reserved__']
 
 """
 generate stream of tokens
@@ -152,7 +152,7 @@ digraph {
 
     dot_file.append('')
 
-    limit_sigs = filter(lambda s: signals[s][0] not in ['//__digital_reserved__','[~UNUSED~]'], signals)
+    limit_sigs = filter(lambda s: signals[s][0] not in comment_signals, signals)
     actual_sig_lines = set()
     extended_sigs = {}
     #actual_sig_lines.add((src,dst))
