@@ -1,0 +1,7 @@
+syntax: glob
+*.pyc
+*.swp
+*.umc
+*.dot
+*.png
+

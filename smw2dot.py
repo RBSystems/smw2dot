@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
+# vim: sts=4 sw=4 et
 
 import sys
 from logicsym import database
@@ -10,7 +11,7 @@ sigcolors = ('green','blue','red','black')
 moduleAPI = [55] # 55 - argument definition
 interconnectAPI = [374, 611, 1402, 1540]
 # 611 - XPanel, 1540 - TPMC-8L, 1402 - TPMC-8X, 374 - Ethernet ISC
-comment_signals = ['//__digital_reserved__','[~UNUSED~]','//__analog_reserved__']
+comment_signals = ["//", "[~"] # first two symbols
 
 """
 generate stream of tokens
@@ -109,31 +110,39 @@ def parse(data):
                 modules["m"+mtag] = module
     return header, signals, modules
 
+# dot cpecific functions
+
+# signal not comment and not group name or unused
+def is_significant(name):
+    return not any(map(lambda prefix: name.startswith(prefix), comment_signals))
+
+def adv_len(data):
+    return len(filter(lambda x: x is not None, data))
+
+def make_node(tag, item):
+    return '  %s [shape="box", label="%s%s"];'%(tag, item['name'],item['comment'])
+
+def make_signal(tag, name, stype):
+    return '  %s [label="%s", color="%s"];'%(tag, name, sigcolors[stype])
+
+def make_link(src, dst, stype):
+    return '  %s -> %s [color="%s"]; '%(src, dst, sigcolors[stype])
+
+def make_direct_signal(line, name, stype):
+    return '  %s -> %s [label="%s", color="%s"];'%(
+        line[0],line[1],name, sigcolors[stype])
+
+def make_signal_bus(line, names, stype):
+    return '  %s -> %s [label="%s", color="%s", style="bold"];'%(
+        line[0],line[1],"\\n".join(names), sigcolors[stype])
+
+def nonum(name):
+    return filter(lambda x: not x.isdigit(), name)
+
+# making dot files
 def make_dot(header, signals, modules):
-    def adv_len(data):
-        return len(filter(lambda x: x is not None, data))
-
-    def make_node(tag, item):
-        return '  %s [label="%s%s"];'%(tag, item['name'],item['comment'])
-
-    def make_signal(line, name, stype):
-        return '  %s -> %s [label="%s", color="%s"];'%(
-            line[0],line[1],name, sigcolors[stype])
-
-    def make_signal_bus(line, names, stype):
-        return '  %s -> %s [label="%s", color="%s", style="bold"];'%(
-            line[0],line[1],"\\n".join(names), sigcolors[stype])
-
-    head = """\
-// file: %s
-// dealer: %s
-// programmer: %s
-// hint: %s
-
-digraph {
-  //node [shape="record"];
-  node [shape="box"];
-"""%(header['file'],header['dealer'],header['programer'],header['hint'])
+    head = """// file: %s\n// dealer: %s\n// programmer: %s\n// hint: %s\n\ndigraph {"""%(
+        header['file'],header['dealer'],header['programer'],header['hint'])
     tail = """}"""
     dot_file = [head]
 
@@ -152,10 +161,8 @@ digraph {
 
     dot_file.append('')
 
-    limit_sigs = filter(lambda s: signals[s][0] not in comment_signals, signals)
-    actual_sig_lines = set()
+    limit_sigs = filter(lambda s: is_significant(signals[s][0]), signals)
     extended_sigs = {}
-    #actual_sig_lines.add((src,dst))
     #extended_sigs = { (src,dst):[(name0,type0),(name1,type1)] }
     
     for s in limit_sigs:
@@ -173,36 +180,98 @@ digraph {
             for i in ins:
                 pack.add((o,i))
         for line in pack:
-            actual_sig_lines.add(line)
             if extended_sigs.get(line) is None:
                 extended_sigs[line]=[]
             extended_sigs[line].append(signals[s])
-            #dot_file.append(make_signal(line,sname,stype))
-        #print extended_sigs
 
     # bus signals agregate
-    nonum = lambda name: filter(lambda x: not x.isdigit(), name)
-    for asl in actual_sig_lines:
-        if len(extended_sigs[asl])==1:
-            sname, stype = extended_sigs[asl][0]
-            dot_file.append(make_signal(asl,sname,stype))
+    for addr in extended_sigs:
+        if len(extended_sigs[addr])==1:
+            sname, stype = extended_sigs[addr][0]
+            dot_file.append(make_direct_signal(addr,sname,stype))
         else:
             pack = {}
-            for n,t in extended_sigs[asl]:
+            for n,t in extended_sigs[addr]:
                 tag = (nonum(n),t)
                 if pack.get(tag) is None:
                     pack[tag]=[]
                 pack[tag].append(n)
             for bulk in pack:
                 if len(pack[bulk])==1:
-                    dot_file.append(make_signal(asl,pack[bulk][0],bulk[1]))
+                    dot_file.append(make_direct_signal(addr,pack[bulk][0],bulk[1]))
                 else:
-                    dot_file.append(make_signal_bus(asl,pack[bulk],bulk[1]))
+                    dot_file.append(make_signal_bus(addr,pack[bulk],bulk[1]))
     
     dot_file.append(tail)
     return "\n".join(dot_file)
 
+def make_dot_merged(header, signals, modules):
+    head = """// file: %s\n// dealer: %s\n// programmer: %s\n// hint: %s\n\ndigraph {"""%(
+        header['file'],header['dealer'],header['programer'],header['hint'])
+    tail = """}"""
+    dot_file = [head]
 
+    limit_mods = filter(lambda m: adv_len(modules[m]['ins']) or adv_len(modules[m]['outs']), modules)
+    limit_mods.sort()
+
+    dot_file.extend(map(lambda m: make_node(m, modules[m]), limit_mods))
+    dot_file.append('')
+
+    limit_sigs = filter(lambda s: is_significant(signals[s][0]), signals)
+    limit_sigs.sort()
+
+    direct_sigs = {}
+    # for every signal get set of pairs (signal,module) and (module, signal)
+    # bus unable to create
+    for s in limit_sigs:
+        sname, stype = signals[s]
+        stag = "s%d"%s
+
+        outs = filter(lambda m: s in modules[m]['outs'], limit_mods)
+        ins = filter(lambda m: s in modules[m]['ins'], limit_mods)
+
+        # filtering out single signals
+        if len(outs)==1 and len(ins)==1:
+            line = (outs[0],ins[0])
+            if direct_sigs.get(line) is None:
+                direct_sigs[line]=[]
+            direct_sigs[line].append(signals[s])
+
+            # for single signals don't create dots
+            # we will add them later
+            continue
+
+        # for others create packets
+        pack = set()
+        map(lambda m: pack.add((m,stag)), outs)
+        map(lambda m: pack.add((stag,m)), ins)
+        if len(pack)>1:
+            dot_file.append(make_direct_signal(stag, sname, stype))
+            for src, dst in pack:
+                dot_file.append(make_link(src,dst,stype))
+        elif len(pack)==1:
+            dot_file.append(make_signal(stag, sname, stype))
+            for src, dst in pack:
+                dot_file.append(make_link(src,dst,stype))
+
+    # adding single signals, some of them aggregating into bus
+    for addr in direct_sigs:
+        pack = {}
+        for sname, stype in direct_sigs[addr]:
+            tag = (nonum(sname),stype)
+            if pack.get(tag) is None:
+                pack[tag]=[]
+            pack[tag].append(sname)
+        for bulk in pack:
+            if len(pack[bulk])==1:
+                dot_file.append(make_direct_signal(addr,pack[bulk][0],bulk[1]))
+            else:
+                dot_file.append(make_signal_bus(addr,pack[bulk],bulk[1]))
+
+    dot_file.append(tail)
+    return "\n".join(dot_file)
+
+# entry point
 def main():
     if len(sys.argv) != 2:
         print 'Please specify one filename on the command line.'
@@ -213,6 +282,7 @@ def main():
     
     header,sigs,mods = parse(tree)
     print make_dot(header,sigs,mods)
+    #print make_dot_merged(header,sigs,mods)
 
 if "__main__" == __name__:
     main()
