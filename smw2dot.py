@@ -2,10 +2,12 @@
 # -*- coding: utf8 -*-
 # vim: sts=4 sw=4 et
 
-import sys
 from logicsym import database
+from optparse import OptionParser
 
-
+##
+## some predefined things
+##
 sigtypes = ('unknown','digital','analog','serial')
 sigcolors = ('green','blue','red','black')
 moduleAPI = [55] # 55 - argument definition
@@ -13,10 +15,10 @@ interconnectAPI = [374, 611, 1402, 1540]
 # 611 - XPanel, 1540 - TPMC-8L, 1402 - TPMC-8X, 374 - Ethernet ISC
 comment_signals = ["//", "[~"] # first two symbols
 
-"""
-generate stream of tokens
-looking like {'a':'b c d', 'e':'f'} for "[\na=b c d\ne=f\n]"
-"""
+##
+## generate stream of tokens
+##
+# tokens looks like {'a':'b c d', 'e':'f'} for "[\na=b c d\ne=f\n]"
 def tokenize(data):
     lines = filter(len, map(lambda x: x.strip(), data.split("\n")))
     for line in lines:
@@ -58,6 +60,9 @@ def make_module(name, mtype, ins=[], outs=[], params=[], comps=[], comment=''):
         'comment':comment,
         }
 
+##
+## get required information from tokens
+##
 def parse(data):
     header = {}
     signals = {1:('0',0),2:('1',0),3:('Local',0)}
@@ -110,14 +115,20 @@ def parse(data):
                 modules["m"+mtag] = module
     return header, signals, modules
 
-# dot cpecific functions
-
+##
+## dot specific functions
+##
 # signal not comment and not group name or unused
 def is_significant(name):
     return not any(map(lambda prefix: name.startswith(prefix), comment_signals))
 
+# get length list without empty cells
 def adv_len(data):
     return len(filter(lambda x: x is not None, data))
+
+# gent signal name without index number
+def nonum(name):
+    return filter(lambda x: not x.isdigit(), name)
 
 def make_node(tag, item):
     return '  %s [shape="box", label="%s%s"];'%(tag, item['name'],item['comment'])
@@ -136,15 +147,18 @@ def make_signal_bus(line, names, stype):
     return '  %s -> %s [label="%s", color="%s", style="bold"];'%(
         line[0],line[1],"\\n".join(names), sigcolors[stype])
 
-def nonum(name):
-    return filter(lambda x: not x.isdigit(), name)
-
-# making dot files
-def make_dot(header, signals, modules):
-    head = """// file: %s\n// dealer: %s\n// programmer: %s\n// hint: %s\n\ndigraph {"""%(
+def make_head(header):
+    return """// file: %s\n// dealer: %s\n// programmer: %s\n// hint: %s\n\ndigraph {"""%(
         header['file'],header['dealer'],header['programer'],header['hint'])
-    tail = """}"""
-    dot_file = [head]
+
+def make_tail():
+    return "}"
+
+##
+## making dot files
+##
+def make_dot(header, signals, modules):
+    dot_file = [make_head(header)]
 
     checkT = False
     checkF = False
@@ -202,14 +216,11 @@ def make_dot(header, signals, modules):
                 else:
                     dot_file.append(make_signal_bus(addr,pack[bulk],bulk[1]))
     
-    dot_file.append(tail)
+    dot_file.append(make_tail())
     return "\n".join(dot_file)
 
 def make_dot_merged(header, signals, modules):
-    head = """// file: %s\n// dealer: %s\n// programmer: %s\n// hint: %s\n\ndigraph {"""%(
-        header['file'],header['dealer'],header['programer'],header['hint'])
-    tail = """}"""
-    dot_file = [head]
+    dot_file = [make_head(header)]
 
     limit_mods = filter(lambda m: adv_len(modules[m]['ins']) or adv_len(modules[m]['outs']), modules)
     limit_mods.sort()
@@ -246,7 +257,7 @@ def make_dot_merged(header, signals, modules):
         map(lambda m: pack.add((m,stag)), outs)
         map(lambda m: pack.add((stag,m)), ins)
         if len(pack)>1:
-            dot_file.append(make_direct_signal(stag, sname, stype))
+            dot_file.append(make_signal(stag, sname, stype))
             for src, dst in pack:
                 dot_file.append(make_link(src,dst,stype))
         elif len(pack)==1:
@@ -268,21 +279,44 @@ def make_dot_merged(header, signals, modules):
             else:
                 dot_file.append(make_signal_bus(addr,pack[bulk],bulk[1]))
 
-    dot_file.append(tail)
+    dot_file.append(make_tail())
     return "\n".join(dot_file)
 
-# entry point
+##
+## entry point
+##
+# parse command line options and create some output
 def main():
-    if len(sys.argv) != 2:
-        print 'Please specify one filename on the command line.'
-        sys.exit(1)
+    usage = "usage: %prog [options] inputfile\ninputfile of smw/umc/cmc Crestron's filetypes"
 
-    text = open(sys.argv[1],"rt").read()
+    parser = OptionParser(usage=usage)
+    parser.add_option("-o","--output", dest="output",
+        help="write result to FILE", metavar="FILE")
+
+    parser.add_option("-m","--merged", dest="merge",
+        action="store_true",
+        help="make \"merged signals\" version", default=False)
+
+    (options,args) = parser.parse_args()
+
+    if len(args) != 1:
+        parser.error("input file is required")
+
+    (filename,) = args
+    text = open(filename, "rt").read()
     tree = tokenize(text)
     
     header,sigs,mods = parse(tree)
-    print make_dot(header,sigs,mods)
-    #print make_dot_merged(header,sigs,mods)
+    if options.merge:
+        result = make_dot_merged(header,sigs,mods)
+    else:
+        result = make_dot(header,sigs,mods)
+
+    if options.output is not None:
+        open(options.output, "wt").write(result)
+    else:
+        print result
+
 
 if "__main__" == __name__:
     main()
